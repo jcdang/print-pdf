@@ -1,9 +1,10 @@
 {
   "name": "print-pdf",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Print DOM element to PDF",
   "keywords": ["print", "pdf", "DOM"],
   "engineStrict": true,
+  "main": "dist/index.js",
   "engines": {
     "node": ">= 8.9.0"
   },

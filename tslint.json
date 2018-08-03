@@ -16,10 +16,10 @@
     "number-literal-format": false,
     "no-bitwise": false,
     "member-ordering": false,
+    "interface-name": false,
     "typedef": [
       true,
       "parameter",
-      "arrow-parameter",
       "property-declaration",
       "member-variable-declaration"
     ]

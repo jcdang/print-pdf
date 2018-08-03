@@ -16,7 +16,6 @@ This library is relatively new so please feel free to leave any suggestions.
 
 ## TODO
 * Inline images
-* Progress callback
 * Investigate performance enhancements
 * tests
 

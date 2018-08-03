@@ -12,6 +12,10 @@
     "no-redundant-jsdoc": false,
     "prefer-type-cast": false,
     "no-http-string": false,
+    "no-increment-decrement": false,
+    "number-literal-format": false,
+    "no-bitwise": false,
+    "member-ordering": false,
     "typedef": [
       true,
       "parameter",

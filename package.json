@@ -7,7 +7,10 @@
     "pdf",
     "DOM"
   ],
-  "engineStrict": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jcdang/print-pdf.git"
+  },
   "main": "dist/src/index.js",
   "engines": {
     "node": ">= 8.9.0"

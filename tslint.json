@@ -17,6 +17,7 @@
     "no-bitwise": false,
     "member-ordering": false,
     "interface-name": false,
+    "max-func-body-length": false,
     "typedef": [
       true,
       "parameter",

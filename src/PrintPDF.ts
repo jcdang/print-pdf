@@ -65,8 +65,8 @@ function base64Encode(str: string) {
 export class PrintPDF {
   private static readonly PSEUDO_ELEMENTS: string[] = [
     '::after',
-    '::before',
-    '::placeholder'
+    '::before'
+    // '::placeholder'
   ];
 
   private static readonly IGNORED_PROPERTIES: Set<string> = new Set<string>([
@@ -79,6 +79,12 @@ export class PrintPDF {
     'animation-name',
     'animation-play-state: ',
     'animation-timing-function',
+    'animation-iteration-count',
+    'animation-play-state',
+    'transition-delay',
+    'transition-duration',
+    'transition-property',
+    'transition-timing-function',
     'cursor'
   ]);
 
@@ -115,6 +121,7 @@ export class PrintPDF {
   private win: Window;
   private readonly element: HTMLElement;
   private uniqueCounter: number;
+  private defaultsMap: Map<string, Map<string, {}>>;
 
   constructor(element: HTMLElement, cfg: IPrintConfig = {}) {
     this.serializer = new XMLSerializer();
@@ -122,6 +129,24 @@ export class PrintPDF {
     this.win = cfg.window || window;
     this.element = element;
     this.uniqueCounter = 0;
+    this.defaultsMap = new Map<string, Map<string, {}>>();
+  }
+
+  public getDefaultMap(tagName: string): Map<string, {}> {
+    if (this.defaultsMap.has(tagName)) {
+      return this.defaultsMap.get(tagName);
+    }
+    const el = this.doc.createElement(tagName);
+    const elMap = new Map<string, {}>();
+    this.doc.body.appendChild(el);
+    const computedStyles = this.win.getComputedStyle(el);
+    Array.from(computedStyles).forEach(prop => {
+      elMap.set(prop, computedStyles.getPropertyValue(prop));
+    });
+    el.remove();
+    this.defaultsMap.set(tagName, elMap);
+
+    return elMap;
   }
 
   public getUniqueClassName(): string {
@@ -200,8 +225,6 @@ export class PrintPDF {
         ffRules.forEach((r: CSSStyleRule) => {
           const styleProperties = Array.from(r.style);
           const styleText = styleProperties.map((property: string) => {
-            const priority = r.style.getPropertyPriority(property);
-            const importance = priority ? ' !important' : '';
             let propValue = r.style.getPropertyValue(property);
             if (/url\(["']?[^)]+["']?\)/.test(propValue)) {
               const baseUrl = r.parentStyleSheet.href || this.element.ownerDocument.location.href;
@@ -216,7 +239,7 @@ export class PrintPDF {
               });
             }
 
-            return `\t${property}: ${propValue}${importance};`;
+            return `\t${property}: ${propValue};`;
           }).join('\n');
           const textNode = this.doc.createTextNode(`\n@font-face {\n${styleText}\n}\n`);
           globalStyle.appendChild(textNode);
@@ -226,23 +249,25 @@ export class PrintPDF {
     });
   }
 
-  public getCSSTextNode(computedStyle: CSSStyleDeclaration, dst: HTMLElement, selector: string = '') {
+  public getCSSText(computedStyle: CSSStyleDeclaration, dst: HTMLElement, selector: string = '') {
     const propertyNames = Array.from(computedStyle);
-    const cssText = propertyNames.filter((name: string) => !PrintPDF.IGNORED_PROPERTIES.has(name))
-      .map((propertyName: string) => {
-        const priority = computedStyle.getPropertyPriority(propertyName);
-        const importance = priority ? ' !important' : '';
+    const defaultMap = this.getDefaultMap(dst.tagName);
+    const textPairs = [];
+
+    propertyNames.filter((name: string) => !PrintPDF.IGNORED_PROPERTIES.has(name))
+      .forEach((propertyName: string) => {
         const propValue = computedStyle.getPropertyValue(propertyName);
-
-        return `\t${propertyName}: ${propValue}${importance};`;
-      }).join('\n');
-
+        if (selector !== '' || defaultMap.get(propertyName) !== propValue) {
+          textPairs.push(`\t${propertyName}: ${propValue} !important;`);
+        }
+      });
+    const cssText = textPairs.join('\n');
     if (dst.className.length === 0) {
       dst.className = this.getUniqueClassName();
     }
     const className = dst.className;
 
-    return this.doc.createTextNode(`\n.${className}${selector} {\n${cssText}\n}\n`);
+    return `\n.${className}${selector} {\n${cssText}\n}\n`;
   }
 
   public toPDF(progressFn: (percentComplete: number, statusMsg: string) => void = () => { return; }): Promise<JsPDF> {
@@ -271,24 +296,43 @@ export class PrintPDF {
       dst.className = '';
       dst.removeAttribute('style');
       const computedStyle = this.win.getComputedStyle(src); // Weird issue if computed styles aren't read up front
-      const textNode = this.getCSSTextNode(computedStyle, dst);
-      copiedStyles.push(textNode);
+      const text = this.getCSSText(computedStyle, dst);
+      copiedStyles.push(text);
       PrintPDF.PSEUDO_ELEMENTS.forEach((pseudoSelector: string) => {
         const psComputedStyle = this.win.getComputedStyle(src, pseudoSelector);
-        const psTextNode = this.getCSSTextNode(psComputedStyle, dst, pseudoSelector);
-        copiedStyles.push(psTextNode);
+        const content = psComputedStyle.getPropertyValue('content');
+        if (content !== 'none') {
+          const psText = this.getCSSText(psComputedStyle, dst, pseudoSelector);
+          copiedStyles.push(psText);
+        }
       });
       const statusMsg = `Reading Computed Style ${counter}/${numElements}`;
       const percentComplete = counter / numElements * copySubTaskPercent;
       progressFn(percentComplete, statusMsg);
     });
 
+    this.defaultsMap.forEach((innerMap, tagName) => {
+      const textPairs = [];
+      innerMap.forEach((propValue, propertyName) => {
+        textPairs.push(`\t${propertyName}: ${propValue};`);
+      });
+      const styleText = `\n.print-cn-${tagName} {\n${textPairs.join('\n')}\n}\n`;
+      copiedStyles.push(styleText);
+    });
+
+    // Adding the default styling based on tag name
+    this.traverseNodes(element, copyElement, (__: HTMLElement, dst: HTMLElement) => {
+      dst.className = `print-cn-${dst.tagName} ${dst.className}`;
+    });
+
     return this.copyFontFaces(globalStyle, progressFn).then(() => {
+      const stylesText = copiedStyles.join('');
+      const textNode = this.doc.createTextNode(stylesText);
+      globalStyle.appendChild(textNode);
       const promises = srcDstPairs.map((pair: ISrcDstPair) => {
         const { src, dst } = pair;
 
         return new Promise((resolve) => {
-          copiedStyles.forEach(css => globalStyle.appendChild(css));
           ['scrollLeft', 'scrollTop', 'value'].forEach((prop: string) => {
             dst[prop] = src[prop];
           });
@@ -319,6 +363,8 @@ export class PrintPDF {
         tmpCanvas.width = width;
         tmpCanvas.height = height;
         const tmpCtx = tmpCanvas.getContext('2d', { alpha: false });
+        tmpCtx.fillStyle = '#ffffff';
+        tmpCtx.fillRect(0, 0, width, height);
 
         return new Promise(resolve => {
           const img = new Image();
@@ -333,7 +379,8 @@ export class PrintPDF {
 
       }).then(dataURL => {
         progressFn(.95, 'Creating PDF');
-        const pdf = new JsPDF('l', 'pt', [width, height]);
+        const orientation = (width > height) ? 'l' : 'p';
+        const pdf = new JsPDF(orientation, 'pt', [width, height]);
         const w = Math.floor(pdf.internal.pageSize.getWidth());
         const h = Math.floor(pdf.internal.pageSize.getHeight());
         pdf.addImage(dataURL, 'JPEG', 0, 0, w, h);

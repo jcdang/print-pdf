@@ -14,7 +14,6 @@ function getBinaryPromise(url: string): Promise<string> {
     const xhr = new XMLHttpRequest();
     xhr.open('GET', url, true);
     xhr.overrideMimeType('text/plain; charset=x-user-defined');
-    xhr.send(null);
     xhr.onreadystatechange = () => {
       if (xhr.readyState === 4) {
         if (xhr.status === 200) {
@@ -25,6 +24,7 @@ function getBinaryPromise(url: string): Promise<string> {
         }
       }
     };
+    xhr.send();
   });
 }
 
@@ -156,12 +156,12 @@ export class PrintPDF {
   }
 
   public traverseNodes(o: HTMLElement, d: HTMLElement, applyFn: (n1: HTMLElement, n2: HTMLElement) => void) {
+    const { filter } = Array.prototype;
+
     applyFn(o, d);
     if (o && d) {
-      const filteredSrc = Array.from(o.childNodes).filter((e: {}) => e instanceof HTMLElement);
-      const filteredDst = Array.from(d.childNodes).filter((e: {}) => e instanceof HTMLElement);
-      const srcNodes: HTMLElement[] = filteredSrc as HTMLElement[];
-      const dstNodes: HTMLElement[]  = filteredDst as HTMLElement[];
+      const srcNodes = filter.call(o.childNodes, (e: {}) => e instanceof HTMLElement);
+      const dstNodes = filter.call(d.childNodes, (e: {}) => e instanceof HTMLElement);
       if (srcNodes && dstNodes && srcNodes.length === dstNodes.length) {
         PrintPDF.zip(srcNodes, dstNodes).forEach((v: [HTMLElement, HTMLElement]) =>
           this.traverseNodes(v[0], v[1], applyFn)
@@ -182,6 +182,7 @@ export class PrintPDF {
         value: string;
       }
       const promises: Promise<KV>[] = [];
+      let counter = 0;
 
       ffRules.forEach((r: CSSStyleRule) => {
         const styleProperties = Array.from(r.style);
@@ -194,27 +195,22 @@ export class PrintPDF {
             const baseUrl = r.parentStyleSheet.href || this.element.ownerDocument.location.href;
             const url = new URL(match, baseUrl).toString();
             const mimeType = PrintPDF.getMimeType(url);
-            const promChain = getBinaryPromise(url).then(base64Encode)
-              .then(enc => {
-                return `url("data:${mimeType};base64,${enc}")`;
-              }).then(inlineUrl => ({ key: url, value: inlineUrl }));
+            const promChain = getBinaryPromise(url).then(base64Encode).then(enc => {
+                counter++;
+                const percent = (counter / promises.length * .10) + .30;
+                const status = `Loading Font Asset ${counter}/${promises.length}`;
+                progressFn(percent, status);
+
+                return { key: url, value: `url("data:${mimeType};base64,${enc}")` };
+              }
+            );
             promises.push(promChain);
             exec = reg.exec(propValue);
           }
         });
       });
 
-      let counter = 0;
-      promises.forEach(promise => {
-        promise.then(() => {
-          counter++;
-          const percent = (counter / promises.length * .10) + .30;
-          const status = `Loading Font Asset ${counter}/${promises.length}`;
-          progressFn(percent, status);
-        });
-      });
-
-      Promise.all(promises).then(kvList => {
+      return Promise.all(promises).then(kvList => {
         const mapResults = new Map<string, string>();
         kvList.forEach(kv => {
           mapResults.set(kv.key, kv.value);
@@ -250,11 +246,11 @@ export class PrintPDF {
   }
 
   public getCSSText(computedStyle: CSSStyleDeclaration, dst: HTMLElement, selector: string = '') {
-    const propertyNames = Array.from(computedStyle);
+    const { filter } = Array.prototype;
     const defaultMap = this.getDefaultMap(dst.tagName);
     const textPairs = [];
 
-    propertyNames.filter((name: string) => !PrintPDF.IGNORED_PROPERTIES.has(name))
+    filter.call(computedStyle, (name: string) => !PrintPDF.IGNORED_PROPERTIES.has(name))
       .forEach((propertyName: string) => {
         const propValue = computedStyle.getPropertyValue(propertyName);
         if (selector !== '' || defaultMap.get(propertyName) !== propValue) {
@@ -290,42 +286,49 @@ export class PrintPDF {
 
     let counter = 0;
     const copySubTaskPercent = .3;
+    const nodePromises = [];
     this.traverseNodes(element, copyElement, (src: HTMLElement, dst: HTMLElement) => {
-      counter++;
-      srcDstPairs.push({ src, dst });
-      dst.className = '';
-      dst.removeAttribute('style');
-      const computedStyle = this.win.getComputedStyle(src); // Weird issue if computed styles aren't read up front
-      const text = this.getCSSText(computedStyle, dst);
-      copiedStyles.push(text);
-      PrintPDF.PSEUDO_ELEMENTS.forEach((pseudoSelector: string) => {
-        const psComputedStyle = this.win.getComputedStyle(src, pseudoSelector);
-        const content = psComputedStyle.getPropertyValue('content');
-        if (content !== 'none') {
-          const psText = this.getCSSText(psComputedStyle, dst, pseudoSelector);
-          copiedStyles.push(psText);
-        }
-      });
-      const statusMsg = `Reading Computed Style ${counter}/${numElements}`;
-      const percentComplete = counter / numElements * copySubTaskPercent;
-      progressFn(percentComplete, statusMsg);
-    });
-
-    this.defaultsMap.forEach((innerMap, tagName) => {
-      const textPairs = [];
-      innerMap.forEach((propValue, propertyName) => {
-        textPairs.push(`\t${propertyName}: ${propValue};`);
-      });
-      const styleText = `\n.print-cn-${tagName} {\n${textPairs.join('\n')}\n}\n`;
-      copiedStyles.push(styleText);
-    });
-
-    // Adding the default styling based on tag name
-    this.traverseNodes(element, copyElement, (__: HTMLElement, dst: HTMLElement) => {
-      dst.className = `print-cn-${dst.tagName} ${dst.className}`;
+      nodePromises.push(new Promise(resolve => {
+        this.win.requestAnimationFrame(() => {
+          counter++;
+          srcDstPairs.push({ src, dst });
+          dst.className = '';
+          dst.removeAttribute('style');
+          const computedStyle = this.win.getComputedStyle(src);
+          const text = this.getCSSText(computedStyle, dst);
+          copiedStyles.push(text);
+          PrintPDF.PSEUDO_ELEMENTS.forEach((pseudoSelector: string) => {
+            const psComputedStyle = this.win.getComputedStyle(src, pseudoSelector);
+            const content = psComputedStyle.getPropertyValue('content');
+            if (content !== 'none') {
+              const psText = this.getCSSText(psComputedStyle, dst, pseudoSelector);
+              copiedStyles.push(psText);
+            }
+          });
+          const statusMsg = `Reading Computed Style ${counter}/${numElements}`;
+          const percentComplete = counter / numElements * copySubTaskPercent;
+          progressFn(percentComplete, statusMsg);
+          resolve();
+        });
+      }));
     });
 
     return this.copyFontFaces(globalStyle, progressFn).then(() => {
+      return Promise.all(nodePromises);
+    }).then(() => {
+      this.defaultsMap.forEach((innerMap, tagName) => {
+        const textPairs = [];
+        innerMap.forEach((propValue, propertyName) => {
+          textPairs.push(`\t${propertyName}: ${propValue};`);
+        });
+        const styleText = `\n.print-cn-${tagName} {\n${textPairs.join('\n')}\n}\n`;
+        copiedStyles.push(styleText);
+      });
+
+      // Adding the default styling based on tag name
+      this.traverseNodes(element, copyElement, (__: HTMLElement, dst: HTMLElement) => {
+        dst.className = `print-cn-${dst.tagName} ${dst.className}`;
+      });
       const stylesText = copiedStyles.join('');
       const textNode = this.doc.createTextNode(stylesText);
       globalStyle.appendChild(textNode);
@@ -340,55 +343,54 @@ export class PrintPDF {
         });
       });
 
-      return Promise.all(promises).then(() => {
-        progressFn(.50, 'Appending Master StyleSheet');
-        copyElement.appendChild(globalStyle);
+      return Promise.all(promises);
+    }).then(() => {
+      progressFn(.50, 'Appending Master StyleSheet');
+      copyElement.appendChild(globalStyle);
 
-        return copyElement;
-      }).then(copy => {
-        progressFn(.60, 'Serializing');
+      return copyElement;
+    }).then(copy => {
+      progressFn(.60, 'Serializing');
 
-        return this.serializer.serializeToString(copy);
-      }).then(serialized => {
-        progressFn(.70, 'Encoding to Data URI');
-        const encoded = encodeURIComponent(serialized);
-        const foreignObject = `<foreignObject width='100%' height='100%'>${encoded}</foreignObject>`;
-        const namespace = 'http://www.w3.org/2000/svg';
-        const svgMarkup = `<svg xmlns='${namespace}' width='${width}' height='${height}'>${foreignObject}</svg>`;
+      return this.serializer.serializeToString(copy);
+    }).then(serialized => {
+      progressFn(.70, 'Encoding to Data URI');
+      const encoded = encodeURIComponent(serialized);
+      const foreignObject = `<foreignObject width='100%' height='100%'>${encoded}</foreignObject>`;
+      const namespace = 'http://www.w3.org/2000/svg';
+      const svgMarkup = `<svg xmlns='${namespace}' width='${width}' height='${height}'>${foreignObject}</svg>`;
 
-        return `data:image/svg+xml,${svgMarkup}`;
-      }).then(dataUri => {
-        progressFn(.80, 'Creating Canvas');
-        const tmpCanvas = this.doc.createElement('canvas');
-        tmpCanvas.width = width;
-        tmpCanvas.height = height;
-        const tmpCtx = tmpCanvas.getContext('2d', { alpha: false });
-        tmpCtx.fillStyle = '#ffffff';
-        tmpCtx.fillRect(0, 0, width, height);
+      return `data:image/svg+xml,${svgMarkup}`;
+    }).then(dataUri => {
+      progressFn(.80, 'Creating Canvas');
+      const tmpCanvas = this.doc.createElement('canvas');
+      tmpCanvas.width = width;
+      tmpCanvas.height = height;
+      const tmpCtx = tmpCanvas.getContext('2d', { alpha: false });
+      tmpCtx.fillStyle = '#ffffff';
+      tmpCtx.fillRect(0, 0, width, height);
 
-        return new Promise(resolve => {
-          const img = new Image();
-          img.onload = () =>  {
-            progressFn(.90, 'Drawing');
-            tmpCtx.drawImage(img, 0, 0, width, height);
-            const dataURL = tmpCanvas.toDataURL('image/jpeg', 1.0);
-            resolve(dataURL);
-          };
-          img.src = dataUri;
-        });
-
-      }).then(dataURL => {
-        progressFn(.95, 'Creating PDF');
-        const orientation = (width > height) ? 'l' : 'p';
-        const pdf = new JsPDF(orientation, 'pt', [width, height]);
-        const w = Math.floor(pdf.internal.pageSize.getWidth());
-        const h = Math.floor(pdf.internal.pageSize.getHeight());
-        pdf.addImage(dataURL, 'JPEG', 0, 0, w, h);
-        progressFn(1.0, 'Done');
-
-        return pdf;
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () =>  {
+          progressFn(.90, 'Drawing');
+          tmpCtx.drawImage(img, 0, 0, width, height);
+          const dataURL = tmpCanvas.toDataURL('image/jpeg', 1.0);
+          resolve(dataURL);
+        };
+        img.src = dataUri;
       });
 
+    }).then(dataURL => {
+      progressFn(.95, 'Creating PDF');
+      const orientation = (width > height) ? 'l' : 'p';
+      const pdf = new JsPDF(orientation, 'pt', [width, height]);
+      const w = Math.floor(pdf.internal.pageSize.getWidth());
+      const h = Math.floor(pdf.internal.pageSize.getHeight());
+      pdf.addImage(dataURL, 'PNG', 0, 0, w, h);
+      progressFn(1.0, 'Done');
+
+      return pdf;
     });
   }
 

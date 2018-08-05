@@ -197,7 +197,7 @@ export class PrintPDF {
             const mimeType = PrintPDF.getMimeType(url);
             const promChain = getBinaryPromise(url).then(base64Encode).then(enc => {
                 counter++;
-                const percent = (counter / promises.length * .10) + .30;
+                const percent = (counter / promises.length * .20);
                 const status = `Loading Font Asset ${counter}/${promises.length}`;
                 progressFn(percent, status);
 
@@ -269,9 +269,7 @@ export class PrintPDF {
   public toPDF(progressFn: (percentComplete: number, statusMsg: string) => void = () => { return; }): Promise<JsPDF> {
     const element = this.element;
     const numElements = element.getElementsByTagName('*').length + 1;
-    progressFn(0.0, 'Cloning Node');
-    const copyElement = document.importNode(element, true) as HTMLElement;
-    copyElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    let copyElement;
     const ceComputedStyle = this.win.getComputedStyle(element);
     let width = element.clientWidth;
     let height = element.clientHeight;
@@ -284,36 +282,45 @@ export class PrintPDF {
     const srcDstPairs: ISrcDstPair[] = [];
     const copiedStyles = [];
 
-    let counter = 0;
-    const copySubTaskPercent = .3;
-    const nodePromises = [];
-    this.traverseNodes(element, copyElement, (src: HTMLElement, dst: HTMLElement) => {
-      nodePromises.push(new Promise(resolve => {
-        this.win.requestAnimationFrame(() => {
-          counter++;
-          srcDstPairs.push({ src, dst });
-          dst.className = '';
-          dst.removeAttribute('style');
-          const computedStyle = this.win.getComputedStyle(src);
-          const text = this.getCSSText(computedStyle, dst);
-          copiedStyles.push(text);
-          PrintPDF.PSEUDO_ELEMENTS.forEach((pseudoSelector: string) => {
-            const psComputedStyle = this.win.getComputedStyle(src, pseudoSelector);
-            const content = psComputedStyle.getPropertyValue('content');
-            if (content !== 'none') {
-              const psText = this.getCSSText(psComputedStyle, dst, pseudoSelector);
-              copiedStyles.push(psText);
-            }
-          });
-          const statusMsg = `Reading Computed Style ${counter}/${numElements}`;
-          const percentComplete = counter / numElements * copySubTaskPercent;
-          progressFn(percentComplete, statusMsg);
-          resolve();
-        });
-      }));
-    });
+    return new Promise(resolve => {
+      this.win.setTimeout(() => {
+        progressFn(0.0, 'Cloning Node');
+        copyElement = this.doc.importNode(element, true) as HTMLElement;
+        copyElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+        resolve();
+      },                  100);
+    }).then(() => {
+      return this.copyFontFaces(globalStyle, progressFn);
+    }).then(() => {
+      let counter = 0;
+      const copySubTaskPercent = .6;
+      const nodePromises = [];
+      this.traverseNodes(element, copyElement, (src: HTMLElement, dst: HTMLElement) => {
+        nodePromises.push(new Promise(resolve => {
+          this.win.setTimeout(() => {
+            counter++;
+            srcDstPairs.push({ src, dst });
+            dst.className = '';
+            dst.removeAttribute('style');
+            const computedStyle = this.win.getComputedStyle(src);
+            const text = this.getCSSText(computedStyle, dst);
+            copiedStyles.push(text);
+            PrintPDF.PSEUDO_ELEMENTS.forEach((pseudoSelector: string) => {
+              const psComputedStyle = this.win.getComputedStyle(src, pseudoSelector);
+              const content = psComputedStyle.getPropertyValue('content');
+              if (content !== 'none') {
+                const psText = this.getCSSText(psComputedStyle, dst, pseudoSelector);
+                copiedStyles.push(psText);
+              }
+            });
+            const statusMsg = `Reading Computed Style ${counter}/${numElements}`;
+            const percentComplete = (counter / numElements * copySubTaskPercent) + .2;
+            progressFn(percentComplete, statusMsg);
+            resolve();
+          },                  counter * 100);
+        }));
+      });
 
-    return this.copyFontFaces(globalStyle, progressFn).then(() => {
       return Promise.all(nodePromises);
     }).then(() => {
       this.defaultsMap.forEach((innerMap, tagName) => {
@@ -345,16 +352,16 @@ export class PrintPDF {
 
       return Promise.all(promises);
     }).then(() => {
-      progressFn(.50, 'Appending Master StyleSheet');
+      progressFn(.80, 'Appending Master StyleSheet');
       copyElement.appendChild(globalStyle);
 
       return copyElement;
     }).then(copy => {
-      progressFn(.60, 'Serializing');
+      progressFn(.83, 'Serializing');
 
       return this.serializer.serializeToString(copy);
     }).then(serialized => {
-      progressFn(.70, 'Encoding to Data URI');
+      progressFn(.84, 'Encoding to Data URI');
       const encoded = encodeURIComponent(serialized);
       const foreignObject = `<foreignObject width='100%' height='100%'>${encoded}</foreignObject>`;
       const namespace = 'http://www.w3.org/2000/svg';
@@ -362,23 +369,25 @@ export class PrintPDF {
 
       return `data:image/svg+xml,${svgMarkup}`;
     }).then(dataUri => {
-      progressFn(.80, 'Creating Canvas');
-      const tmpCanvas = this.doc.createElement('canvas');
-      tmpCanvas.width = width;
-      tmpCanvas.height = height;
-      const tmpCtx = tmpCanvas.getContext('2d', { alpha: false });
-      tmpCtx.fillStyle = '#ffffff';
-      tmpCtx.fillRect(0, 0, width, height);
 
       return new Promise(resolve => {
-        const img = new Image();
-        img.onload = () =>  {
-          progressFn(.90, 'Drawing');
-          tmpCtx.drawImage(img, 0, 0, width, height);
-          const dataURL = tmpCanvas.toDataURL('image/jpeg', 1.0);
-          resolve(dataURL);
-        };
-        img.src = dataUri;
+        this.win.setTimeout(() => {
+          progressFn(.85, 'Creating Canvas');
+          const tmpCanvas = this.doc.createElement('canvas');
+          tmpCanvas.width = width;
+          tmpCanvas.height = height;
+          const tmpCtx = tmpCanvas.getContext('2d', { alpha: false });
+          tmpCtx.fillStyle = '#ffffff';
+          tmpCtx.fillRect(0, 0, width, height);
+          const img = new Image();
+          img.onload = () =>  {
+            progressFn(.90, 'Drawing');
+            tmpCtx.drawImage(img, 0, 0, width, height);
+            const dataURL = tmpCanvas.toDataURL('image/jpeg', 1.0);
+            resolve(dataURL);
+          };
+          img.src = dataUri;
+        },                  10);
       });
 
     }).then(dataURL => {

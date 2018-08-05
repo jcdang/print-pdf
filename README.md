@@ -13,6 +13,7 @@ Simple HTMLElement to PDF
 
 ## General Information
 This library is relatively new so please feel free to leave any suggestions.
+Fontawesome and glyphicons should work.
 
 ## TODO
 * Inline images

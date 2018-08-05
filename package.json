@@ -1,6 +1,6 @@
 {
   "name": "print-pdf",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Print DOM element to PDF",
   "keywords": [
     "print",

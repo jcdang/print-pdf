@@ -268,7 +268,6 @@ export class PrintPDF {
 
   public toPDF(progressFn: (percentComplete: number, statusMsg: string) => void = () => { return; }): Promise<JsPDF> {
     const element = this.element;
-    const numElements = element.getElementsByTagName('*').length + 1;
     let copyElement;
     const ceComputedStyle = this.win.getComputedStyle(element);
     let width = element.clientWidth;
@@ -313,8 +312,8 @@ export class PrintPDF {
                 copiedStyles.push(psText);
               }
             });
-            const statusMsg = `Reading Computed Style ${counter}/${numElements}`;
-            const percentComplete = (counter / numElements * copySubTaskPercent) + .2;
+            const statusMsg = `Reading Computed Style ${counter}/${nodePromises.length}`;
+            const percentComplete = (counter / nodePromises.length * copySubTaskPercent) + .2;
             progressFn(percentComplete, statusMsg);
             resolve();
           },                  counter * 100);

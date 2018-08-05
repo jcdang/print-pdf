@@ -149,10 +149,10 @@ export class PrintPDF {
     return elMap;
   }
 
-  public getUniqueClassName(): string {
+  public getUniqueId(): string {
     this.uniqueCounter += 1;
 
-    return `print-pdf-cn-${this.uniqueCounter}`;
+    return `print-pdf-${this.uniqueCounter}`;
   }
 
   public traverseNodes(o: HTMLElement, d: HTMLElement, applyFn: (n1: HTMLElement, n2: HTMLElement) => void) {
@@ -254,16 +254,16 @@ export class PrintPDF {
       .forEach((propertyName: string) => {
         const propValue = computedStyle.getPropertyValue(propertyName);
         if (selector !== '' || defaultMap.get(propertyName) !== propValue) {
-          textPairs.push(`\t${propertyName}: ${propValue} !important;`);
+          textPairs.push(`\t${propertyName}: ${propValue};`);
         }
       });
     const cssText = textPairs.join('\n');
-    if (dst.className.length === 0) {
-      dst.className = this.getUniqueClassName();
+    if (!dst.id) {
+      dst.id = this.getUniqueId();
+      dst.className = `print-cn-${dst.tagName}`;
     }
-    const className = dst.className;
 
-    return `\n.${className}${selector} {\n${cssText}\n}\n`;
+    return `\n#${dst.id}${selector} {\n${cssText}\n}\n`;
   }
 
   public toPDF(progressFn: (percentComplete: number, statusMsg: string) => void = () => { return; }): Promise<JsPDF> {
@@ -292,32 +292,41 @@ export class PrintPDF {
       return this.copyFontFaces(globalStyle, progressFn);
     }).then(() => {
       let counter = 0;
-      const copySubTaskPercent = .6;
+      const copySubTaskPercent = .65;
       const nodePromises = [];
       this.traverseNodes(element, copyElement, (src: HTMLElement, dst: HTMLElement) => {
-        nodePromises.push(new Promise(resolve => {
-          this.win.setTimeout(() => {
-            counter++;
-            srcDstPairs.push({ src, dst });
-            dst.className = '';
-            dst.removeAttribute('style');
-            const computedStyle = this.win.getComputedStyle(src);
-            const text = this.getCSSText(computedStyle, dst);
-            copiedStyles.push(text);
-            PrintPDF.PSEUDO_ELEMENTS.forEach((pseudoSelector: string) => {
-              const psComputedStyle = this.win.getComputedStyle(src, pseudoSelector);
-              const content = psComputedStyle.getPropertyValue('content');
-              if (content !== 'none') {
-                const psText = this.getCSSText(psComputedStyle, dst, pseudoSelector);
-                copiedStyles.push(psText);
-              }
-            });
-            const statusMsg = `Reading Computed Style ${counter}/${nodePromises.length}`;
-            const percentComplete = (counter / nodePromises.length * copySubTaskPercent) + .2;
-            progressFn(percentComplete, statusMsg);
-            resolve();
-          },                  counter * 100);
-        }));
+        srcDstPairs.push({ src, dst });
+        dst.className = '';
+        dst.removeAttribute('id');
+        dst.removeAttribute('style');
+        counter++;
+        const itemNumber = counter;
+        const nodePromise = new Promise<number>(resolve => {
+          const computedStyle = this.win.getComputedStyle(src);
+          const text = this.getCSSText(computedStyle, dst);
+          copiedStyles.push(text);
+          PrintPDF.PSEUDO_ELEMENTS.forEach((pseudoSelector: string) => {
+            const psComputedStyle = this.win.getComputedStyle(src, pseudoSelector);
+            const content = psComputedStyle.getPropertyValue('content');
+            if (content !== 'none') {
+              const psText = this.getCSSText(psComputedStyle, dst, pseudoSelector);
+              copiedStyles.push(psText);
+            }
+          });
+          resolve(itemNumber);
+        });
+        nodePromises.push(nodePromise);
+        nodePromise.then(c => {
+          return new Promise(resolve => {
+            this.win.setTimeout(() => {
+              const statusMsg = `Reading Computed Style ${c}/${nodePromises.length}`;
+              const percentComplete = (c / nodePromises.length * copySubTaskPercent) + .2;
+              progressFn(percentComplete, statusMsg);
+              resolve();
+            },                  1);
+          });
+
+        });
       });
 
       return Promise.all(nodePromises);
@@ -331,10 +340,6 @@ export class PrintPDF {
         copiedStyles.push(styleText);
       });
 
-      // Adding the default styling based on tag name
-      this.traverseNodes(element, copyElement, (__: HTMLElement, dst: HTMLElement) => {
-        dst.className = `print-cn-${dst.tagName} ${dst.className}`;
-      });
       const stylesText = copiedStyles.join('');
       const textNode = this.doc.createTextNode(stylesText);
       globalStyle.appendChild(textNode);
@@ -351,16 +356,16 @@ export class PrintPDF {
 
       return Promise.all(promises);
     }).then(() => {
-      progressFn(.80, 'Appending Master StyleSheet');
+      progressFn(.85, 'Appending Master StyleSheet');
       copyElement.appendChild(globalStyle);
 
       return copyElement;
     }).then(copy => {
-      progressFn(.83, 'Serializing');
+      progressFn(.87, 'Serializing');
 
       return this.serializer.serializeToString(copy);
     }).then(serialized => {
-      progressFn(.84, 'Encoding to Data URI');
+      progressFn(.88, 'Encoding to Data URI');
       const encoded = encodeURIComponent(serialized);
       const foreignObject = `<foreignObject width='100%' height='100%'>${encoded}</foreignObject>`;
       const namespace = 'http://www.w3.org/2000/svg';
@@ -371,7 +376,7 @@ export class PrintPDF {
 
       return new Promise(resolve => {
         this.win.setTimeout(() => {
-          progressFn(.85, 'Creating Canvas');
+          progressFn(.90, 'Creating Canvas');
           const tmpCanvas = this.doc.createElement('canvas');
           tmpCanvas.width = width;
           tmpCanvas.height = height;
@@ -380,7 +385,7 @@ export class PrintPDF {
           tmpCtx.fillRect(0, 0, width, height);
           const img = new Image();
           img.onload = () =>  {
-            progressFn(.90, 'Drawing');
+            progressFn(.95, 'Drawing');
             tmpCtx.drawImage(img, 0, 0, width, height);
             const dataURL = tmpCanvas.toDataURL('image/jpeg', 1.0);
             resolve(dataURL);
@@ -390,7 +395,7 @@ export class PrintPDF {
       });
 
     }).then(dataURL => {
-      progressFn(.95, 'Creating PDF');
+      progressFn(.98, 'Creating PDF');
       const orientation = (width > height) ? 'l' : 'p';
       const pdf = new JsPDF(orientation, 'pt', [width, height]);
       const w = Math.floor(pdf.internal.pageSize.getWidth());
